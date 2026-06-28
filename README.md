@@ -128,6 +128,46 @@ Fenster, schreibt `output/scan.log`, sendet bei Alerts E-Mail).
   Unregister-ScheduledTask -TaskName "Chartanalyse Daily" -Confirm:$false  # entfernen
   ```
 
+## In die Cloud: GitHub Actions + Pages (läuft auch wenn dein PC aus ist)
+
+Der Workflow [`.github/workflows/daily.yml`](.github/workflows/daily.yml) führt
+den Scan **täglich in der Cloud** aus, sendet die E-Mail und veröffentlicht den
+Report auf **GitHub Pages** (von überall im Browser abrufbar). Einmalige
+Einrichtung:
+
+1. **Repo auf GitHub anlegen** und diesen Ordner hochladen:
+   ```powershell
+   git remote add origin https://github.com/<DEIN-NAME>/chartanalyse.git
+   git push -u origin main
+   ```
+   > Für GitHub Pages auf dem **kostenlosen** Plan muss das Repo **public** sein.
+   > Das ist hier unbedenklich: Der Code enthält keine Geheimnisse – dein
+   > App-Passwort wird als verschlüsseltes *Secret* gespeichert, nicht im Code
+   > (`email_config.json` ist per `.gitignore` ausgeschlossen). Nur die
+   > Report-Seite wäre dann öffentlich abrufbar.
+
+2. **3 Secrets hinterlegen** (Repo → *Settings → Secrets and variables →
+   Actions → New repository secret*):
+   | Name | Wert |
+   |---|---|
+   | `CHARTANALYSE_SENDER_EMAIL` | deine Gmail-Adresse |
+   | `CHARTANALYSE_APP_PASSWORD` | dein 16-stelliges Gmail-App-Passwort |
+   | `CHARTANALYSE_RECIPIENT_EMAIL` | Empfänger (i. d. R. dieselbe Adresse) |
+
+3. **Pages aktivieren:** Repo → *Settings → Pages → Source = „GitHub Actions"*.
+
+4. **Erst manuell testen:** Repo → *Actions → „Chartanalyse Daily" → Run
+   workflow*. Läuft er grün durch, kommt die E-Mail, und unter *Settings →
+   Pages* steht die URL deines Reports (`https://<name>.github.io/chartanalyse/`).
+
+Danach läuft er automatisch **werktags ~22:00 UTC** (nach US-Börsenschluss;
+GitHub-Cron ist UTC und kann sich um Minuten verzögern). Manuell jederzeit über
+*Run workflow* startbar.
+
+> **Doppel-E-Mails vermeiden:** Wenn der Cloud-Lauf übernimmt, am besten die
+> lokale Windows-Aufgabe pausieren:
+> `Disable-ScheduledTask -TaskName "Chartanalyse Daily"`.
+
 ## Hinweis
 
 Heuristische Analyse historischer Kursdaten (Quelle: Yahoo Finance über
