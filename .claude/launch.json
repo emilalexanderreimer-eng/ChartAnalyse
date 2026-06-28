@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Report Viewer",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["viewer.py", "--no-open"],
+      "port": 8000
+    },
+    {
+      "name": "Chartanalyse Scan (S&P 500)",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["main.py"],
+      "port": null
+    }
+  ]
+}

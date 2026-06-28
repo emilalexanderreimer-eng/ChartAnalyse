@@ -1,0 +1,8 @@
+{
+  "_hinweis": "Kopiere diese Datei zu 'email_config.json' und trage deine Daten ein. Fuer Gmail brauchst du ein APP-PASSWORT (nicht dein normales Passwort): https://myaccount.google.com/apppasswords",
+  "sender_email": "emil.alexander.reimer@gmail.com",
+  "app_password": "HIER-DEIN-16-STELLIGES-GMAIL-APP-PASSWORT",
+  "recipient_email": "emil.alexander.reimer@gmail.com",
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587
+}

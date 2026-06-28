@@ -1,0 +1,60 @@
+name: Chartanalyse Daily
+
+# Laeuft taeglich in der Cloud (auch wenn dein PC aus ist) und kann jederzeit
+# manuell ueber den "Run workflow"-Knopf gestartet werden.
+on:
+  schedule:
+    # 22:00 UTC werktags = nach US-Boersenschluss (16:00 ET), ganzjaehrig sicher.
+    # GitHub-Cron laeuft in UTC und kann sich um einige Minuten verzoegern.
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch: {}
+
+# Rechte fuer das Veroeffentlichen auf GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: chartanalyse-daily
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Pakete installieren
+        run: pip install -r requirements.txt
+
+      - name: Scan ausfuehren + E-Mail senden
+        env:
+          CHARTANALYSE_SENDER_EMAIL: ${{ secrets.CHARTANALYSE_SENDER_EMAIL }}
+          CHARTANALYSE_APP_PASSWORD: ${{ secrets.CHARTANALYSE_APP_PASSWORD }}
+          CHARTANALYSE_RECIPIENT_EMAIL: ${{ secrets.CHARTANALYSE_RECIPIENT_EMAIL }}
+        run: python main.py --no-open --email
+
+      - name: Pages-Seite bauen
+        run: python build_site.py
+
+      - name: Pages-Artefakt hochladen
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Auf GitHub Pages veroeffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v4
