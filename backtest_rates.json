@@ -1,0 +1,26 @@
+{
+  "generated": "2026-06-28",
+  "source": "Backtest 503 S&P-500-Aktien, 3 Jahre, Forward 10d, Move 3%, Break 1.5% (roher Linientest, point-in-time)",
+  "params": {"years": 3, "forward": 10, "move": 0.03, "break": 0.015, "lookback": 252},
+  "overall": {"rate": 0.5558, "n": 55153},
+  "by_side": {
+    "SUPPORT": {"rate": 0.5881, "n": 28408},
+    "RESISTANCE": {"rate": 0.5215, "n": 26745}
+  },
+  "by_side_bucket": {
+    "SUPPORT": {
+      "0.00-0.40": {"rate": 0.6197, "n": 1412},
+      "0.40-0.55": {"rate": 0.5721, "n": 5667},
+      "0.55-0.70": {"rate": 0.5946, "n": 8968},
+      "0.70-0.85": {"rate": 0.5766, "n": 6389},
+      "0.85-1.00": {"rate": 0.5985, "n": 5972}
+    },
+    "RESISTANCE": {
+      "0.00-0.40": {"rate": 0.5168, "n": 1308},
+      "0.40-0.55": {"rate": 0.5203, "n": 5447},
+      "0.55-0.70": {"rate": 0.5185, "n": 8272},
+      "0.70-0.85": {"rate": 0.5334, "n": 6159},
+      "0.85-1.00": {"rate": 0.5152, "n": 5559}
+    }
+  }
+}

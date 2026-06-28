@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import datetime as _dt
+import json
 import os
 import sys
 import time
@@ -35,16 +36,7 @@ import config as cfg
 from src.universe import get_sp500_tickers
 from src.data import download_history
 from src.levels import find_pivots, _cluster, _score_levels
-
-# Staerke-Klassen fuer die Auswertung
-_BUCKETS = [(0.0, 0.4), (0.4, 0.55), (0.55, 0.7), (0.7, 0.85), (0.85, 1.01)]
-
-
-def _bucket_label(strength: float) -> str:
-    for lo, hi in _BUCKETS:
-        if lo <= strength < hi:
-            return f"{lo:.2f}-{hi:.2f}" if hi <= 1.0 else f"{lo:.2f}-1.00"
-    return "?"
+from src.stats import bucket_label
 
 
 def _evaluate_stock(df: pd.DataFrame, p) -> list[dict]:
@@ -138,7 +130,7 @@ def _aggregate(events: list[dict]) -> dict:
     """Gruppiert nach Staerke-Bucket: zaehlt reversal/breakout/neutral + Quote."""
     agg: dict[str, dict[str, int]] = {}
     for e in events:
-        b = _bucket_label(e["strength"])
+        b = bucket_label(e["strength"])
         d = agg.setdefault(b, {"reversal": 0, "breakout": 0, "neutral": 0})
         d[e["outcome"]] += 1
     return agg
@@ -147,6 +139,40 @@ def _aggregate(events: list[dict]) -> dict:
 def _rate(d: dict) -> float | None:
     decided = d["reversal"] + d["breakout"]
     return (d["reversal"] / decided) if decided else None
+
+
+def _side_overall(evs: list[dict]) -> dict:
+    r = sum(1 for e in evs if e["outcome"] == "reversal")
+    b = sum(1 for e in evs if e["outcome"] == "breakout")
+    return {"rate": round(r / (r + b), 4) if (r + b) else None, "n": r + b}
+
+
+def _agg_to_rates(agg: dict) -> dict:
+    out = {}
+    for b, d in agg.items():
+        dec = d["reversal"] + d["breakout"]
+        out[b] = {"rate": round(d["reversal"] / dec, 4) if dec else None, "n": dec}
+    return out
+
+
+def _write_rates_json(events: list[dict], p, path: str = "backtest_rates.json") -> str:
+    """Schreibt die Quoten maschinenlesbar – wird live in Mail/Report angezeigt."""
+    sup = [e for e in events if e["side"] == "SUPPORT"]
+    res = [e for e in events if e["side"] == "RESISTANCE"]
+    data = {
+        "generated": _dt.date.today().isoformat(),
+        "source": (f"Backtest {p.years}J, Forward {p.forward}d, Move {p.move*100:.1f}%, "
+                   f"Break {p.brk*100:.1f}% (roher Linientest, point-in-time)"),
+        "params": {"years": p.years, "forward": p.forward, "move": p.move,
+                   "break": p.brk, "lookback": p.lookback},
+        "overall": _side_overall(events),
+        "by_side": {"SUPPORT": _side_overall(sup), "RESISTANCE": _side_overall(res)},
+        "by_side_bucket": {"SUPPORT": _agg_to_rates(_aggregate(sup)),
+                           "RESISTANCE": _agg_to_rates(_aggregate(res))},
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return path
 
 
 def parse_args(argv):
@@ -241,6 +267,8 @@ def _report(events, p, scanned, elapsed):
     csv_path = os.path.join(cfg.OUTPUT_DIR, f"backtest_{stamp}.csv")
     pd.DataFrame(events).to_csv(csv_path, index=False)
     print(f"\n  Rohdaten-CSV: {csv_path}")
+    rates_path = _write_rates_json(events, p)
+    print(f"  Quoten-JSON : {rates_path}  (wird in Mail/Report angezeigt)")
     print(f"  Laufzeit: {elapsed:.1f} s")
     print("\n  Lies die 'Umkehr-Quote' so: Anteil der ENTSCHIEDENEN Tests, die "
           "abprallten\n  statt durchzubrechen. 50 % = Muenzwurf. Hoeher bei "

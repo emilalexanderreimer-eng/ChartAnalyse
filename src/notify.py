@@ -15,6 +15,7 @@ import ssl
 from email.message import EmailMessage
 
 from .reversal import Signal, EarlyWarning
+from . import stats
 
 _REQUIRED = ["sender_email", "app_password", "recipient_email", "smtp_host", "smtp_port"]
 _KIND_LABEL = {
@@ -74,6 +75,7 @@ def _build_message(
 ) -> EmailMessage:
     signals = sorted(signals, key=lambda s: s.confidence, reverse=True)
     early = sorted(early, key=lambda w: abs(w.distance_pct))
+    rates = stats.load_rates()  # historische Umkehr-Quoten (None -> "–")
     n, ne = len(signals), len(early)
     msg = EmailMessage()
     parts = []
@@ -88,17 +90,20 @@ def _build_message(
     # ---- Plaintext (Fallback) ----
     lines = [f"BESTAETIGTE ALERTS ({n}):", ""]
     for s in signals:
+        hr = stats.format_rate(rates, stats.side_from_kind(s.kind), s.level_strength)
         lines.append(
             f"  {s.ticker:<6} {s.direction:<5} {_KIND_LABEL.get(s.kind, s.kind):<26} "
-            f"Linie {s.level_price:.2f}  Conf {s.confidence:.0f}"
+            f"Linie {s.level_price:.2f}  Conf {s.confidence:.0f}  Umkehr(hist.) {hr}"
         )
     if not signals:
         lines.append("  keine")
     lines += ["", f"FRUEHWARNUNGEN ({ne}) – Kurs sitzt an starker Linie:", ""]
     for w in early:
+        hr = stats.format_rate(rates, w.side, w.level_strength)
         lines.append(
             f"  {w.ticker:<6} {('Support' if w.side == 'SUPPORT' else 'Resistance'):<11} "
-            f"Linie {w.level_price:.2f}  Abstand {w.distance_pct:+.2f}%  Staerke {w.level_strength:.2f}"
+            f"Linie {w.level_price:.2f}  Abstand {w.distance_pct:+.2f}%  "
+            f"Staerke {w.level_strength:.2f}  Umkehr(hist.) {hr}"
         )
     if not early:
         lines.append("  keine")
@@ -116,6 +121,8 @@ def _build_message(
         f"<td style='text-align:right'>{s.close:.2f}</td>"
         f"<td style='text-align:right'>{s.volume_ratio:.2f}×</td>"
         f"<td style='text-align:right;font-weight:700;color:#b45309'>{s.confidence:.0f}</td>"
+        f"<td style='text-align:right;font-weight:700'>"
+        f"{stats.format_rate(rates, stats.side_from_kind(s.kind), s.level_strength)}</td>"
         f"</tr>"
         for s in signals
     )
@@ -124,7 +131,7 @@ def _build_message(
         "style='border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;font-size:13px'>"
         "<thead><tr style='background:#f1f5f9;text-align:left'>"
         "<th>Ticker</th><th>Richtung</th><th>Typ</th><th>Linie</th><th>Schluss</th>"
-        "<th>Vol</th><th>Conf</th></tr></thead>"
+        "<th>Vol</th><th>Conf</th><th>Umkehr&nbsp;(hist.)</th></tr></thead>"
         f"<tbody>{alert_rows}</tbody></table>"
         if signals else "<p style='color:#64748b'>Keine bestätigten Alerts.</p>"
     )
@@ -137,6 +144,8 @@ def _build_message(
         f"<td style='text-align:right'>{w.close:.2f}</td>"
         f"<td style='text-align:right'>{w.distance_pct:+.2f} %</td>"
         f"<td style='text-align:right'>{w.level_strength:.2f}</td>"
+        f"<td style='text-align:right;font-weight:700'>"
+        f"{stats.format_rate(rates, w.side, w.level_strength)}</td>"
         f"</tr>"
         for w in early
     )
@@ -145,7 +154,7 @@ def _build_message(
         "style='border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;font-size:13px'>"
         "<thead><tr style='background:#f1f5f9;text-align:left'>"
         "<th>Ticker</th><th>Lage</th><th>Linie</th><th>Schluss</th>"
-        "<th>Abstand</th><th>Stärke</th></tr></thead>"
+        "<th>Abstand</th><th>Stärke</th><th>Umkehr&nbsp;(hist.)</th></tr></thead>"
         f"<tbody>{watch_rows}</tbody></table>"
         if early else "<p style='color:#64748b'>Keine Frühwarnungen.</p>"
     )
@@ -159,6 +168,8 @@ def _build_message(
         "<p style='color:#64748b;font-size:12px;margin-top:16px'>"
         "Details und Charts im angehängten HTML-Report. Frühwarnungen melden nur Nähe zur Linie "
         "(früher, aber unsicherer als bestätigte Alerts). "
+        "<b>Umkehr (hist.)</b> = historischer Anteil abgeprallter Tests im Backtest "
+        "(nach Seite &amp; Stärke); 50&nbsp;% = Münzwurf, empirisch, keine Garantie. "
         "Heuristische Analyse historischer Kursdaten, keine Anlageberatung.</p>"
         "</div>"
     )

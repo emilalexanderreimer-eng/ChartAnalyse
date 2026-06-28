@@ -15,6 +15,7 @@ import pandas as pd
 
 from .reversal import Signal, EarlyWarning
 from .levels import Level
+from . import stats
 
 # matplotlib ohne Display-Backend (laeuft headless / im Batch).
 import logging
@@ -104,6 +105,9 @@ def write_reports(
     stamp = _dt.datetime.now().strftime("%Y-%m-%d_%H%M")
     signals = sorted(signals, key=lambda s: s.confidence, reverse=True)
     early = sorted(early, key=lambda w: abs(w.distance_pct))
+    rates = stats.load_rates()  # historische Umkehr-Quoten (None, falls kein Backtest)
+    rate_src = (f"Quelle: {rates.get('source')}." if rates and rates.get("source")
+                else "Noch kein Backtest vorhanden – mit <code>python backtest.py</code> erzeugen.")
 
     # ---- CSV: bestaetigte Alerts ----
     rows = [
@@ -152,6 +156,7 @@ def write_reports(
             if b64:
                 chart_html = f'<img class="chart" src="data:image/png;base64,{b64}" alt="{s.ticker}">'
         badge = "long" if s.direction == "LONG" else "short"
+        hr = stats.format_rate(rates, stats.side_from_kind(s.kind), s.level_strength)
         cards.append(f"""
         <div class="card">
           <div class="head">
@@ -163,6 +168,7 @@ def write_reports(
             Datum {s.date} &middot; Linie {s.level_price:.2f} &middot; Schluss {s.close:.2f}
             ({s.distance_pct:+.2f} %) &middot; Volumen {s.volume_ratio:.2f}× &middot;
             Linien-Staerke {s.level_strength:.2f} &middot; Kerzen-Qualitaet {s.candle_quality:.2f}
+            &middot; <b>Umkehr-Quote (hist.): {hr}</b>
           </div>
           {chart_html}
         </div>""")
@@ -183,13 +189,15 @@ def write_reports(
             f"<td style='text-align:right'>{w.distance_pct:+.2f} %</td>"
             f"<td style='text-align:right'>{w.level_strength:.2f}</td>"
             f"<td style='text-align:right'>{w.touches}</td>"
+            f"<td style='text-align:right'><b>{stats.format_rate(rates, w.side, w.level_strength)}</b></td>"
             "</tr>"
             for w in early
         )
         watch_body = (
             "<table class='watch'><thead><tr>"
             "<th>Ticker</th><th>Lage</th><th>Linie</th><th>Schluss</th>"
-            "<th>Abstand</th><th>Stärke</th><th>Ber.</th></tr></thead>"
+            "<th>Abstand</th><th>Stärke</th><th>Ber.</th>"
+            "<th>Umkehr-Quote (hist.)</th></tr></thead>"
             f"<tbody>{wrows}</tbody></table>"
         )
     else:
@@ -236,7 +244,9 @@ def write_reports(
   {watch_body}
   <p class="disc">Hinweis: Heuristische Analyse historischer Kursdaten (Quelle: Yahoo Finance),
      keine Anlageberatung. Bestätigte Alerts brauchen eine Umkehrkerze; Frühwarnungen melden nur
-     Nähe zur Linie (unsicherer, früher). Die Confidence ist ein technischer Score, keine Erfolgsgarantie.</p>
+     Nähe zur Linie (unsicherer, früher). Die Confidence ist ein technischer Score, keine Erfolgsgarantie.
+     <br>Umkehr-Quote (hist.) = Anteil abgeprallter Tests im Backtest (nach Seite &amp; Stärke);
+     {rate_src} 50&nbsp;% = Münzwurf. Empirisch, keine Garantie.</p>
 </div>
 </body></html>"""
 
@@ -249,6 +259,7 @@ def write_reports(
 def print_console_summary(signals: list[Signal], early: list[EarlyWarning], scanned: int, cfg) -> None:
     signals = sorted(signals, key=lambda s: s.confidence, reverse=True)
     early = sorted(early, key=lambda w: abs(w.distance_pct))
+    rates = stats.load_rates()
     print("\n" + "=" * 64)
     print(f"  ERGEBNIS: {scanned} Aktien gescannt, {len(signals)} bestaetigte(r) Alert(s) "
           f"(Conf >= {cfg.CONFIDENCE_THRESHOLD}), {len(early)} Fruehwarnung(en)")
@@ -258,18 +269,22 @@ def print_console_summary(signals: list[Signal], early: list[EarlyWarning], scan
     if not signals:
         print("    Keine. (Das ist normal – fundierte Umkehrsignale sind selten.)")
     else:
-        print(f"    {'Ticker':<8} {'Richtung':<6} {'Typ':<20} {'Linie':>9} {'Conf':>6}")
-        print("    " + "-" * 54)
+        print(f"    {'Ticker':<8} {'Richtung':<6} {'Typ':<20} {'Linie':>9} {'Conf':>6} {'Umkehr%':>8}")
+        print("    " + "-" * 63)
         for s in signals:
             typ = "Support-Bounce" if s.kind == "SUPPORT_BOUNCE" else "Resistance-Reject"
-            print(f"    {s.ticker:<8} {s.direction:<6} {typ:<20} {s.level_price:>9.2f} {s.confidence:>6.0f}")
+            hr = stats.format_rate(rates, stats.side_from_kind(s.kind), s.level_strength)
+            print(f"    {s.ticker:<8} {s.direction:<6} {typ:<20} {s.level_price:>9.2f} "
+                  f"{s.confidence:>6.0f} {hr:>8}")
 
     print(f"\n  FRUEHWARNUNGEN – Kurs sitzt an starker Linie ({len(early)}):")
     if not early:
         print("    Keine.")
     else:
-        print(f"    {'Ticker':<8} {'Lage':<11} {'Linie':>9} {'Abstand':>9} {'Staerke':>8}")
-        print("    " + "-" * 50)
+        print(f"    {'Ticker':<8} {'Lage':<11} {'Linie':>9} {'Abstand':>9} {'Staerke':>8} {'Umkehr%':>8}")
+        print("    " + "-" * 59)
         for w in early:
             lage = "Support" if w.side == "SUPPORT" else "Resistance"
-            print(f"    {w.ticker:<8} {lage:<11} {w.level_price:>9.2f} {w.distance_pct:>+8.2f}% {w.level_strength:>8.2f}")
+            hr = stats.format_rate(rates, w.side, w.level_strength)
+            print(f"    {w.ticker:<8} {lage:<11} {w.level_price:>9.2f} {w.distance_pct:>+8.2f}% "
+                  f"{w.level_strength:>8.2f} {hr:>8}")
