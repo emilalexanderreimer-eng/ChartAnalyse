@@ -43,15 +43,32 @@ _SIDE_LABEL = {
 }
 
 
-def _chart_png_b64(ticker: str, df: pd.DataFrame, sig: Signal, levels: list[Level], cfg) -> str | None:
-    """Rendert einen Candlestick-Chart als base64-PNG (oder None bei Fehler)."""
+def _chart_png_b64(
+    ticker: str,
+    df: pd.DataFrame,
+    chart_title: str,
+    levels: list[Level],
+    cfg,
+    highlight_price: float | None = None,
+) -> str | None:
+    """Rendert einen Candlestick-Chart als base64-PNG (oder None bei Fehler).
+
+    highlight_price wird orange hervorgehoben (Signal- bzw. Warnlinie);
+    alle anderen S/R-Linien erscheinen grau gestrichelt.
+    """
     try:
         plot_df = df.tail(cfg.CHART_LOOKBACK_BARS).copy()
         plot_df.index = pd.to_datetime(plot_df.index)
 
-        # Nur Linien im sichtbaren Preisbereich einzeichnen.
         lo, hi = plot_df["Low"].min(), plot_df["High"].max()
-        hlines = sorted({round(lv.price, 4) for lv in levels if lo <= lv.price <= hi})
+        hlines_set = {round(lv.price, 4) for lv in levels if lo <= lv.price <= hi}
+        if highlight_price is not None:
+            hlines_set.add(round(highlight_price, 4))
+        hlines = sorted(hlines_set)
+
+        hl = round(highlight_price, 4) if highlight_price is not None else None
+        colors = ["#f59e0b" if (hl is not None and abs(h - hl) < 0.0001) else "#9ca3af" for h in hlines]
+        widths = [1.5 if c == "#f59e0b" else 0.7 for c in colors]
 
         if _HAS_MPF:
             buf = io.BytesIO()
@@ -62,8 +79,8 @@ def _chart_png_b64(ticker: str, df: pd.DataFrame, sig: Signal, levels: list[Leve
                 type="candle",
                 style=style,
                 volume=True,
-                title=f"\n{ticker} – {_KIND_LABEL.get(sig.kind, sig.kind)}",
-                hlines=dict(hlines=hlines, colors=["#9ca3af"] * len(hlines), linewidths=0.7, linestyle="--"),
+                title=f"\n{chart_title}",
+                hlines=dict(hlines=hlines, colors=colors, linewidths=widths, linestyle="--"),
                 figsize=(10, 5.5),
                 tight_layout=True,
                 savefig=dict(fname=buf, dpi=110, bbox_inches="tight"),
@@ -75,10 +92,9 @@ def _chart_png_b64(ticker: str, df: pd.DataFrame, sig: Signal, levels: list[Leve
         # Fallback ohne mplfinance: einfacher Linienchart.
         fig, ax = plt.subplots(figsize=(10, 4.5))
         ax.plot(plot_df.index, plot_df["Close"], color="#2563eb", lw=1.2)
-        for y in hlines:
-            ax.axhline(y, color="#9ca3af", ls="--", lw=0.7)
-        ax.axhline(sig.level_price, color="#f59e0b", ls="-", lw=1.4, label="Signal-Linie")
-        ax.set_title(f"{ticker} – {_KIND_LABEL.get(sig.kind, sig.kind)}")
+        for y, c, w in zip(hlines, colors, widths):
+            ax.axhline(y, color=c, ls="-" if c == "#f59e0b" else "--", lw=w)
+        ax.set_title(chart_title)
         ax.legend(loc="best", fontsize=8)
         buf = io.BytesIO()
         fig.tight_layout()
@@ -152,7 +168,10 @@ def write_reports(
     for s in signals:
         chart_html = ""
         if cfg.GENERATE_CHARTS and s.ticker in data:
-            b64 = _chart_png_b64(s.ticker, data[s.ticker], s, levels_by_ticker.get(s.ticker, []), cfg)
+            title = f"{s.ticker} – {_KIND_LABEL.get(s.kind, s.kind)}"
+            b64 = _chart_png_b64(s.ticker, data[s.ticker], title,
+                                 levels_by_ticker.get(s.ticker, []), cfg,
+                                 highlight_price=s.level_price)
             if b64:
                 chart_html = f'<img class="chart" src="data:image/png;base64,{b64}" alt="{s.ticker}">'
         badge = "long" if s.direction == "LONG" else "short"
@@ -166,7 +185,7 @@ def write_reports(
           </div>
           <div class="meta">
             Datum {s.date} &middot; Linie {s.level_price:.2f} &middot; Schluss {s.close:.2f}
-            ({s.distance_pct:+.2f} %) &middot; Volumen {s.volume_ratio:.2f}× &middot;
+            ({s.distance_pct:+.2f} %) &middot; Volumen {s.volume_ratio:.2f}&times; &middot;
             Linien-Staerke {s.level_strength:.2f} &middot; Kerzen-Qualitaet {s.candle_quality:.2f}
             &middot; <b>Umkehr-Quote (hist.): {hr}</b>
           </div>
@@ -177,29 +196,36 @@ def write_reports(
         f'({cfg.CONFIDENCE_THRESHOLD}). Das ist normal – fundierte Umkehrsignale sind selten.</p>'
     )
 
-    # ---- HTML: Sektion 2 = Fruehwarnungen (kompakte Tabelle) ----
+    # ---- HTML: Sektion 2 = Fruehwarnungen (Karten mit Charts) ----
     if early:
-        wrows = "".join(
-            "<tr>"
-            f"<td class='tk'>{w.ticker}</td>"
-            f"<td><span class='badge {'long' if w.side == 'SUPPORT' else 'short'}'>"
-            f"{_SIDE_LABEL.get(w.side, w.side)}</span></td>"
-            f"<td style='text-align:right'>{w.level_price:.2f}</td>"
-            f"<td style='text-align:right'>{w.close:.2f}</td>"
-            f"<td style='text-align:right'>{w.distance_pct:+.2f} %</td>"
-            f"<td style='text-align:right'>{w.level_strength:.2f}</td>"
-            f"<td style='text-align:right'>{w.touches}</td>"
-            f"<td style='text-align:right'><b>{stats.format_rate(rates, w.side, w.level_strength)}</b></td>"
-            "</tr>"
-            for w in early
-        )
-        watch_body = (
-            "<table class='watch'><thead><tr>"
-            "<th>Ticker</th><th>Lage</th><th>Linie</th><th>Schluss</th>"
-            "<th>Abstand</th><th>Stärke</th><th>Ber.</th>"
-            "<th>Umkehr-Quote (hist.)</th></tr></thead>"
-            f"<tbody>{wrows}</tbody></table>"
-        )
+        ew_cards = []
+        for w in early:
+            ew_chart_html = ""
+            if cfg.GENERATE_CHARTS and w.ticker in data:
+                side_str = "Support" if w.side == "SUPPORT" else "Resistance"
+                title = f"{w.ticker} – Frühwarnung: {side_str} bei {w.level_price:.2f}"
+                b64 = _chart_png_b64(w.ticker, data[w.ticker], title,
+                                     levels_by_ticker.get(w.ticker, []), cfg,
+                                     highlight_price=w.level_price)
+                if b64:
+                    ew_chart_html = f'<img class="chart" src="data:image/png;base64,{b64}" alt="{w.ticker}">'
+            badge_cls = "long" if w.side == "SUPPORT" else "short"
+            hr = stats.format_rate(rates, w.side, w.level_strength)
+            ew_cards.append(f"""
+        <div class="card ew-card">
+          <div class="head">
+            <span class="ticker">{w.ticker}</span>
+            <span class="badge {badge_cls}">{_SIDE_LABEL.get(w.side, w.side)}</span>
+            <span class="ew-dist">{w.distance_pct:+.2f} %</span>
+          </div>
+          <div class="meta">
+            Datum {w.date} &middot; Linie <b>{w.level_price:.2f}</b> &middot; Schluss {w.close:.2f}
+            &middot; Stärke {w.level_strength:.2f} &middot; {w.touches}&times; berührt
+            &middot; <b>Umkehr-Quote (hist.): {hr}</b>
+          </div>
+          {ew_chart_html}
+        </div>""")
+        watch_body = "\n".join(ew_cards)
     else:
         watch_body = '<p class="empty">Aktuell keine Frühwarnungen (kein Kurs sitzt direkt an einer starken Linie).</p>'
 
@@ -224,10 +250,8 @@ def write_reports(
   .meta {{ color:#94a3b8; font-size:12.5px; margin:8px 0 12px; }}
   .chart {{ width:100%; border-radius:8px; background:#fff; }}
   .empty {{ color:#94a3b8; }}
-  table.watch {{ width:100%; border-collapse:collapse; font-size:13px; }}
-  table.watch th, table.watch td {{ padding:8px 10px; border-bottom:1px solid #1e293b; }}
-  table.watch th {{ text-align:left; color:#94a3b8; font-weight:600; }}
-  table.watch td.tk {{ font-weight:700; }}
+  .ew-card {{ border-color:#1e40af; }}
+  .ew-dist {{ margin-left:auto; font-weight:700; color:#93c5fd; font-size:14px; }}
   .disc {{ color:#64748b; font-size:11.5px; margin-top:24px; line-height:1.5; }}
 </style></head>
 <body>
