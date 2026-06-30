@@ -37,9 +37,13 @@ _KIND_LABEL = {
     "SUPPORT_BOUNCE": "Support-Bounce (bullisch)",
     "RESISTANCE_REJECT": "Resistance-Reject (baerisch)",
 }
-_SIDE_LABEL = {
-    "SUPPORT": "an Support (Linie unter Kurs)",
-    "RESISTANCE": "an Resistance (Linie über Kurs)",
+_EW_LABEL = {
+    "LONG": "Ausbruch &uarr; &uuml;ber Widerstand",
+    "SHORT": "Ausbruch &darr; unter Support",
+}
+_EW_LABEL_PLAIN = {
+    "LONG": "Ausbruch HOCH (Widerstand)",
+    "SHORT": "Ausbruch TIEF (Support)",
 }
 
 
@@ -70,12 +74,22 @@ def _chart_png_b64(
         colors = ["#f59e0b" if (hl is not None and abs(h - hl) < 0.0001) else "#9ca3af" for h in hlines]
         widths = [1.5 if c == "#f59e0b" else 0.7 for c in colors]
 
+        # DEMA-Linie berechnen (blau; wird als addplot eingebettet)
+        dema_addplot = None
+        try:
+            from .indicators import dema as _compute_dema
+            dema_full = _compute_dema(df["Close"], getattr(cfg, "DEMA_PERIOD", 200))
+            dema_plot = dema_full.reindex(plot_df.index)
+            if _HAS_MPF and dema_plot.notna().any():
+                dema_addplot = mpf.make_addplot(dema_plot, color="#3b82f6", width=1.3, panel=0)
+        except Exception:
+            pass
+
         if _HAS_MPF:
             buf = io.BytesIO()
             mc = mpf.make_marketcolors(up="#16a34a", down="#dc2626", inherit=True)
             style = mpf.make_mpf_style(base_mpf_style="charles", marketcolors=mc, gridstyle=":")
-            mpf.plot(
-                plot_df,
+            mpf_kwargs: dict = dict(
                 type="candle",
                 style=style,
                 volume=True,
@@ -85,13 +99,22 @@ def _chart_png_b64(
                 tight_layout=True,
                 savefig=dict(fname=buf, dpi=110, bbox_inches="tight"),
             )
+            if dema_addplot is not None:
+                mpf_kwargs["addplot"] = [dema_addplot]
+            mpf.plot(plot_df, **mpf_kwargs)
             plt.close("all")
             buf.seek(0)
             return base64.b64encode(buf.read()).decode("ascii")
 
         # Fallback ohne mplfinance: einfacher Linienchart.
         fig, ax = plt.subplots(figsize=(10, 4.5))
-        ax.plot(plot_df.index, plot_df["Close"], color="#2563eb", lw=1.2)
+        ax.plot(plot_df.index, plot_df["Close"], color="#2563eb", lw=1.2, label="Close")
+        try:
+            from .indicators import dema as _compute_dema2
+            dema_fb = _compute_dema2(df["Close"], getattr(cfg, "DEMA_PERIOD", 200)).reindex(plot_df.index)
+            ax.plot(plot_df.index, dema_fb, color="#3b82f6", lw=1.1, ls="--", label="DEMA(200)")
+        except Exception:
+            pass
         for y, c, w in zip(hlines, colors, widths):
             ax.axhline(y, color=c, ls="-" if c == "#f59e0b" else "--", lw=w)
         ax.set_title(chart_title)
@@ -202,20 +225,20 @@ def write_reports(
         for w in early:
             ew_chart_html = ""
             if cfg.GENERATE_CHARTS and w.ticker in data:
-                side_str = "Support" if w.side == "SUPPORT" else "Resistance"
-                title = f"{w.ticker} – Frühwarnung: {side_str} bei {w.level_price:.2f}"
+                ew_label = _EW_LABEL_PLAIN.get(w.direction, w.direction)
+                title = f"{w.ticker} - {ew_label} @ {w.level_price:.2f}"
                 b64 = _chart_png_b64(w.ticker, data[w.ticker], title,
                                      levels_by_ticker.get(w.ticker, []), cfg,
                                      highlight_price=w.level_price)
                 if b64:
                     ew_chart_html = f'<img class="chart" src="data:image/png;base64,{b64}" alt="{w.ticker}">'
-            badge_cls = "long" if w.side == "SUPPORT" else "short"
+            badge_cls = "long" if w.direction == "LONG" else "short"
             hr = stats.format_rate(rates, w.side, w.level_strength)
             ew_cards.append(f"""
         <div class="card ew-card">
           <div class="head">
             <span class="ticker">{w.ticker}</span>
-            <span class="badge {badge_cls}">{_SIDE_LABEL.get(w.side, w.side)}</span>
+            <span class="badge {badge_cls}">{_EW_LABEL.get(w.direction, w.direction)}</span>
             <span class="ew-dist">{w.distance_pct:+.2f} %</span>
           </div>
           <div class="meta">
@@ -301,14 +324,14 @@ def print_console_summary(signals: list[Signal], early: list[EarlyWarning], scan
             print(f"    {s.ticker:<8} {s.direction:<6} {typ:<20} {s.level_price:>9.2f} "
                   f"{s.confidence:>6.0f} {hr:>8}")
 
-    print(f"\n  FRUEHWARNUNGEN – Kurs sitzt an starker Linie ({len(early)}):")
+    print(f"\n  FRUEHWARNUNGEN – DEMA+SuperTrend an S/R-Linie ({len(early)}):")
     if not early:
         print("    Keine.")
     else:
-        print(f"    {'Ticker':<8} {'Lage':<11} {'Linie':>9} {'Abstand':>9} {'Staerke':>8} {'Umkehr%':>8}")
-        print("    " + "-" * 59)
+        print(f"    {'Ticker':<8} {'Richtung':<26} {'Linie':>9} {'Abstand':>9} {'Staerke':>8} {'Umkehr%':>8}")
+        print("    " + "-" * 74)
         for w in early:
-            lage = "Support" if w.side == "SUPPORT" else "Resistance"
+            richtung = _EW_LABEL_PLAIN.get(w.direction, w.direction)
             hr = stats.format_rate(rates, w.side, w.level_strength)
-            print(f"    {w.ticker:<8} {lage:<11} {w.level_price:>9.2f} {w.distance_pct:>+8.2f}% "
+            print(f"    {w.ticker:<8} {richtung:<26} {w.level_price:>9.2f} {w.distance_pct:>+8.2f}% "
                   f"{w.level_strength:>8.2f} {hr:>8}")

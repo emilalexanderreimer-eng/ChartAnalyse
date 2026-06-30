@@ -37,9 +37,14 @@ class Signal:
 
 @dataclass
 class EarlyWarning:
-    """Fruehwarnung: Kurs sitzt JETZT an einer starken Linie (noch ohne Umkehr)."""
+    """Fruehwarnung: Trend (DEMA+SuperTrend) laeuft auf eine S/R-Linie zu, die
+    moeglicherweise durchbrochen wird.
+      direction='LONG'  -> bullish, Kurs naehert sich RESISTANCE von unten
+      direction='SHORT' -> bearish, Kurs naehert sich SUPPORT von oben
+    """
     ticker: str
-    side: str            # "SUPPORT" (Linie unter Kurs) oder "RESISTANCE" (Linie ueber Kurs)
+    side: str            # "SUPPORT" oder "RESISTANCE" (welche Linie)
+    direction: str       # "LONG" oder "SHORT" (Trend-Richtung)
     level_price: float
     close: float
     distance_pct: float  # signiert: <0 = Linie ueber Kurs, >0 = Linie unter Kurs
@@ -150,15 +155,52 @@ def detect_signal(ticker: str, df: pd.DataFrame, levels: list[Level], cfg) -> Si
 
 
 def detect_early_warnings(ticker: str, df: pd.DataFrame, levels: list[Level], cfg) -> list[EarlyWarning]:
-    """Fruehwarnung: meldet die naechstgelegene STARKE Linie, an der der Kurs
-    aktuell sitzt (innerhalb EARLY_WARNING_ZONE) – noch ohne bestaetigte Umkehr."""
+    """Fruehwarnung: DEMA+SuperTrend zeigen in dieselbe Richtung UND der Kurs
+    laeuft gerade auf eine S/R-Linie zu, die in dieser Richtung durchbrochen
+    werden koennte.
+
+    Bullish (Kurs > DEMA(200), SuperTrend gruen):
+      -> warnt bei RESISTANCE-Linien in der Naehe (Ausbruch nach oben moeglich)
+    Bearish (Kurs < DEMA(200), SuperTrend rot):
+      -> warnt bei SUPPORT-Linien in der Naehe (Ausbruch nach unten moeglich)
+    Wenn DEMA und SuperTrend in verschiedene Richtungen zeigen: keine Warnung.
+    """
     if not getattr(cfg, "EARLY_WARNING_ENABLED", True) or not levels or len(df) < 2:
         return []
+
+    from .indicators import dema as _dema, supertrend as _supertrend
 
     close = float(df.iloc[-1]["Close"])
     prior_close = float(df.iloc[-2]["Close"])
     if close <= 0:
         return []
+
+    # ---- DEMA + SuperTrend bestimmen ----
+    dema_period = getattr(cfg, "DEMA_PERIOD", 200)
+    st_period = getattr(cfg, "ST_ATR_PERIOD", 12)
+    st_mult = getattr(cfg, "ST_MULTIPLIER", 3.0)
+
+    try:
+        dema_val = float(_dema(df["Close"], dema_period).iloc[-1])
+        st_dir, _ = _supertrend(df, st_period, st_mult)
+        st_bullish = int(st_dir.iloc[-1]) == 1
+    except Exception:
+        return []
+
+    if not np.isfinite(dema_val):
+        return []  # nicht genug Daten fuer DEMA
+
+    above_dema = close > dema_val
+
+    if above_dema and st_bullish:
+        direction = "LONG"
+        wanted_side = "RESISTANCE"   # Ausbruch nach oben ueber Widerstand
+    elif not above_dema and not st_bullish:
+        direction = "SHORT"
+        wanted_side = "SUPPORT"      # Ausbruch nach unten unter Support
+    else:
+        return []   # DEMA und SuperTrend widersprechen sich -> keine Warnung
+
     date_str = str(df.index[-1].date()) if hasattr(df.index[-1], "date") else str(df.index[-1])
     zone = cfg.EARLY_WARNING_ZONE
     only_fresh = getattr(cfg, "EARLY_WARNING_ONLY_FRESH", True)
@@ -167,21 +209,23 @@ def detect_early_warnings(ticker: str, df: pd.DataFrame, levels: list[Level], cf
     for lv in levels:
         if lv.strength < cfg.EARLY_WARNING_MIN_STRENGTH:
             continue
-        dist = (close - lv.price) / lv.price  # signiert
-        if abs(dist) <= zone:
-            # "frisch": gestern noch ausserhalb der Zone, heute drin
-            if only_fresh and abs((prior_close - lv.price) / lv.price) <= zone:
-                continue
-            side = "RESISTANCE" if lv.price >= close else "SUPPORT"
-            candidates.append(EarlyWarning(
-                ticker=ticker, side=side, level_price=lv.price, close=close,
-                distance_pct=dist * 100, level_strength=lv.strength,
-                touches=lv.touches, date=date_str,
-            ))
+        dist = (close - lv.price) / lv.price
+        if abs(dist) > zone:
+            continue
+        side = "RESISTANCE" if lv.price >= close else "SUPPORT"
+        if side != wanted_side:
+            continue
+        if only_fresh and abs((prior_close - lv.price) / lv.price) <= zone:
+            continue
+        candidates.append(EarlyWarning(
+            ticker=ticker, side=side, direction=direction,
+            level_price=lv.price, close=close,
+            distance_pct=dist * 100, level_strength=lv.strength,
+            touches=lv.touches, date=date_str,
+        ))
 
     if not candidates:
         return []
-    # nur die naechstgelegene starke Linie melden (haelt die Liste uebersichtlich)
     candidates.sort(key=lambda w: abs(w.distance_pct))
     return candidates[:1]
 

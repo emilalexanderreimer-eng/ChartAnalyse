@@ -95,3 +95,16 @@ OPEN_HTML_WHEN_DONE = True   # Report nach Lauf automatisch im Browser oeffnen
 # email_config.example.json). Fehlt/ungueltig -> E-Mail wird einfach uebersprungen.
 EMAIL_CONFIG_FILE = "email_config.json"
 EMAIL_SEND_WHEN_EMPTY = False  # True = auch mailen, wenn es 0 Alerts gibt
+
+# ----------------------------------------------------------------------------
+# DEMA + SuperTrend Strategie-Filter (fuer Fruehwarnungen)
+# ----------------------------------------------------------------------------
+# Fruehwarnungen erscheinen NUR, wenn DEMA und SuperTrend in dieselbe Richtung
+# zeigen UND eine S/R-Linie gerade angefahren wird, die in dieser Richtung
+# durchbrochen werden koennte:
+#   Bullish (Kurs > DEMA, ST gruen)  -> warnt bei RESISTANCE-Linien (Ausbruch hoch)
+#   Bearish (Kurs < DEMA, ST rot)    -> warnt bei SUPPORT-Linien    (Ausbruch tief)
+# Zeigen DEMA und ST in verschiedene Richtungen: KEINE Fruehwarnung.
+DEMA_PERIOD = 200        # Laenge des Double EMA (aus TradingLab-Video)
+ST_ATR_PERIOD = 12       # ATR-Periode des SuperTrend
+ST_MULTIPLIER = 3.0      # ATR-Multiplikator des SuperTrend

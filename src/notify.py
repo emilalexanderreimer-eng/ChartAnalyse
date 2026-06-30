@@ -22,9 +22,13 @@ _KIND_LABEL = {
     "SUPPORT_BOUNCE": "Support-Bounce (bullisch)",
     "RESISTANCE_REJECT": "Resistance-Reject (baerisch)",
 }
-_SIDE_LABEL = {
-    "SUPPORT": "an Support (Linie unter Kurs)",
-    "RESISTANCE": "an Resistance (Linie über Kurs)",
+_EW_LABEL_HTML = {
+    "LONG": "Ausbruch &uarr; &uuml;ber Widerstand",
+    "SHORT": "Ausbruch &darr; unter Support",
+}
+_EW_LABEL_PLAIN = {
+    "LONG": "Ausbruch HOCH (Widerstand)",
+    "SHORT": "Ausbruch TIEF (Support)",
 }
 
 
@@ -97,11 +101,12 @@ def _build_message(
         )
     if not signals:
         lines.append("  keine")
-    lines += ["", f"FRUEHWARNUNGEN ({ne}) – Kurs sitzt an starker Linie:", ""]
+    lines += ["", f"FRUEHWARNUNGEN ({ne}) – DEMA+SuperTrend an S/R-Linie:", ""]
     for w in early:
         hr = stats.format_rate(rates, w.side, w.level_strength)
+        richtung = _EW_LABEL_PLAIN.get(w.direction, w.direction)
         lines.append(
-            f"  {w.ticker:<6} {('Support' if w.side == 'SUPPORT' else 'Resistance'):<11} "
+            f"  {w.ticker:<6} {richtung:<26} "
             f"Linie {w.level_price:.2f}  Abstand {w.distance_pct:+.2f}%  "
             f"Staerke {w.level_strength:.2f}  Umkehr(hist.) {hr}"
         )
@@ -139,7 +144,7 @@ def _build_message(
     watch_rows = "".join(
         f"<tr>"
         f"<td style='font-weight:700'>{w.ticker}</td>"
-        f"<td>{_SIDE_LABEL.get(w.side, w.side)}</td>"
+        f"<td>{_EW_LABEL_HTML.get(w.direction, w.direction)}</td>"
         f"<td style='text-align:right'>{w.level_price:.2f}</td>"
         f"<td style='text-align:right'>{w.close:.2f}</td>"
         f"<td style='text-align:right'>{w.distance_pct:+.2f} %</td>"
@@ -153,7 +158,7 @@ def _build_message(
         "<table cellspacing='0' cellpadding='6' "
         "style='border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;font-size:13px'>"
         "<thead><tr style='background:#f1f5f9;text-align:left'>"
-        "<th>Ticker</th><th>Lage</th><th>Linie</th><th>Schluss</th>"
+        "<th>Ticker</th><th>Richtung</th><th>Linie</th><th>Schluss</th>"
         "<th>Abstand</th><th>Stärke</th><th>Umkehr&nbsp;(hist.)</th></tr></thead>"
         f"<tbody>{watch_rows}</tbody></table>"
         if early else "<p style='color:#64748b'>Keine Frühwarnungen.</p>"
@@ -163,7 +168,7 @@ def _build_message(
         "<div style='font-family:Segoe UI,Arial,sans-serif;color:#0f172a'>"
         f"<h2 style='margin:0 0 8px'>✅ Bestätigte Reversal-Alerts ({n})</h2>"
         f"{alert_table}"
-        f"<h2 style='margin:22px 0 8px'>⚠️ Frühwarnungen – Kurs sitzt an starker Linie ({ne})</h2>"
+        f"<h2 style='margin:22px 0 8px'>⚠️ Frühwarnungen – DEMA+SuperTrend an S/R-Linie ({ne})</h2>"
         f"{watch_table}"
         "<p style='color:#64748b;font-size:12px;margin-top:16px'>"
         "Details und Charts im angehängten HTML-Report. Frühwarnungen melden nur Nähe zur Linie "
